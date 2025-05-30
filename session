@@ -1,5 +1,21 @@
 #!/bin/env perl
 #
+# session - GNOME/Linux window session restore utility
+# Copyright (C) [YEAR] [YOUR NAME]
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
 # >session save
 # >session restore [existing|matching|missing]
 # >session --session=session-name save
@@ -12,7 +28,8 @@
 # --session: Set session filename
 # --debug=[0-3]: Set debug level
 #
-# For more details see: http://technology.research-lab.ca/?p=1041
+# Improved version by ismdevteam: https://github.com/ismdevteam/session
+# Original script from here: http://technology.research-lab.ca/?p=1041
 
 # Tips:
 #   Firefox: about:config -> browser.sessionstore.resume_session_once
@@ -95,25 +112,27 @@ if    ( $action eq 'save' )
   File::Path::mkpath ( File::Basename::dirname ( $session ) )
     if ! -d '' . File::Basename::dirname ( $session );
 
-  open ( my $SES, '>', $session );
+  open ( my $SES, '>', $session ) or die "Cannot open $session for writing: $!";
   print $SES Data::Dumper->Dump ( [ $windows ], [ '$session' ] );
   close ( $SES );
 
-  print "Session saved.\n";
+  print "Session saved to $session.\n";
 }
 
 # Session restore
 
 elsif ( $action eq 'restore' )
 {
-  open ( my $SES, '<', $session ) || die ( "No saved session.\n" );
-  my $session = do{ local $/ = undef; <$SES>; };
+  die "Session file $session does not exist.\n" unless -e $session;
+  
+  open ( my $SES, '<', $session ) or die "Cannot open $session for reading: $!";
+  my $session_content = do{ local $/ = undef; <$SES>; };
   close ( $SES );
 
-  print "Restoring session.\n";
+  print "Restoring session from $session.\n";
   my $level = { existing => 0, matching => 1, missing => 2 }->{shift()} // 1;
 
-  eval ( $session );
+  eval ( $session_content );
 
   # Match session windows:
 
@@ -186,55 +205,57 @@ elsif ( $action eq 'restore' )
       # recursive depth-first search algorithm...  It goes through every
       # possible session<->current set (map) combination, to find which has
       # the highest total score.
-      sub depth_first_search
-      {
-        my ( $comm, $sid, $cid ) = ( @_ );
-
-        # Pick the next saved session ID:
-        my %sid = %{$sid // {}}; my $sid;
-        foreach ( keys ( %$comm ) )
-        {
-          next if $sid{$_};
-          $sid = $_;
-          last;
-        }
-        return ( 0, \%sid ) if ! $sid;
-
-        my %best = ( score => 0 );
-
-        # Pick the next current window ID:
-        my %cid = %{$cid // {}};
-        # @NULL = no match case (ie, fewer windows than session):
-        my @NULL = ( keys ( %$comm ) - keys ( %{$comm->{$sid}} )
-                       > grep { /^NULL#\d+$/ } ( values ( %sid ) ) )
-                   ? ( 'NULL#'.(keys ( %sid )+0) ) : ();
-        foreach my $cid ( keys ( %{$comm->{$sid}} ), @NULL )
-        {
-          next if $cid{$cid};
-          $cid{$cid}++;
-          $sid{$sid} = $cid;
-          my $_score = $cid =~ /^NULL#\d+$/ ? 1 : $comm->{$sid}->{$cid};
-
-          print "DEBUG: ".('  ' x keys(%sid))."Trying $sid + $cid...\n"
-            if $opt{debug} > 2;
-          my ( $score, $map ) = depth_first_search ( $comm, \%sid, \%cid );
-          $best{last} = ! $score; # Only care about score on the last sid
-          print "DEBUG: ".('  ' x keys(%sid))."Result = $_score"
-                . ( $score ? " + $score (best) = " . ( $_score + $score )
-                           : '' ) . "\n"
-            if $opt{debug} > 2;
-          $score += $_score;
-          if ( $score > $best{score} )
-          {
-            %best = ( sid => $map, cid => $cid,
-                      last => $best{last}, score => $score );
-          }
-
-          delete ( $cid{$cid} );
-        }
-
-        return ( $best{score}, $best{score} ? $best{sid} : \%sid );
-      }
+	sub depth_first_search {
+	    my ($comm) = @_;
+	    my @sids = keys %$comm;
+	    my $best_score = 0;
+	    my $best_map = {};
+	    
+	    # Use an explicit stack instead of recursion
+	    my @stack = ({ 
+		map => {}, 
+		used_cids => {}, 
+		score => 0, 
+		depth => 0 
+	    });
+	    
+	    while (my $state = pop @stack) {
+		my ($map, $used_cids, $score, $depth) = 
+		    @{$state}{qw(map used_cids score depth)};
+		
+		if ($depth == @sids) {
+		    if ($score > $best_score) {
+		        $best_score = $score;
+		        $best_map = $map;
+		    }
+		    next;
+		}
+		
+		my $current_sid = $sids[$depth];
+		my @candidates = keys %{$comm->{$current_sid}};
+		
+		# Option to skip this window (NULL case)
+		push @stack, {
+		    map => { %$map, $current_sid => "NULL#$depth" },
+		    used_cids => { %$used_cids },
+		    score => $score + 1,
+		    depth => $depth + 1
+		};
+		
+		# Try all possible matches
+		foreach my $cid (@candidates) {
+		    next if $used_cids->{$cid};
+		    push @stack, {
+		        map => { %$map, $current_sid => $cid },
+		        used_cids => { %$used_cids, $cid => 1 },
+		        score => $score + $comm->{$current_sid}{$cid},
+		        depth => $depth + 1
+		    };
+		}
+	    }
+	    
+	    return ($best_score, $best_map);
+	}
 
       # Record the resulting set (map):
       foreach ( keys ( %$map ) )
@@ -434,6 +455,8 @@ elsif ( $action eq 'restore' )
           'MAXIMIZED_HORZ' => "wmctrl -ir $current->{id} -b toggle,maximized_horz",
           'SHADED' => "wmctrl -ir $current->{id} -b toggle,shaded",
           'FULLSCREEN' => "wmctrl -ir $current->{id} -b toggle,fullscreen",
+          'ABOVE' => "wmctrl -ir $current->{id} -b toggle,above",
+          'STICKY' => "wmctrl -ir $current->{id} -b toggle,sticky",
         };
         next if ! $actions->{$prop};
 
@@ -458,8 +481,11 @@ elsif ( $action eq 'restore' )
 }
 else
 {
-  die ( "Usage: session save\n"
-      . "       session restore existing|matching|missing\n" );
+  die ( "Usage: session-file.ph save\n"
+      . "       session-file.ph restore existing|matching|missing\n"
+      . "Options:\n"
+      . "  --session=FILENAME   Specify session file to save/restore\n"
+      . "  --debug=LEVEL        Set debug level (0-3)\n" );
 }
 
 # Get current window list from wmctrl
