@@ -114,7 +114,7 @@ Known Limitations
 
 License
 
-GNU GPLv3 - See [LICENSE](https://github.com/ismdevteam/session/LICENSE) file.
+GNU GPLv3 - See [LICENSE](https://github.com/ismdevteam/session/blob/master/LICENSE) file.
 
 Based on original work by [Arnon Weinberg](https://github.com/arnon-weinberg/session), with improvements by [ismdevteam](https://github.com/ismdevteam/session)
 
