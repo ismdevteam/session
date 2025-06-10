@@ -198,10 +198,11 @@ sleep 1
 
 # Open gedit
 gedit &
-sleep 1
+sleep 3
 
 # Unmaximize gedit (removes fullscreen/maximized state)
-wmctrl -r "gedit" -b remove,maximized_vert,maximized_horz
+wmctrl -r "gedit" -b remove,maximized_vert
+wmctrl -r "gedit" -b remove,maximized_horz
 
 # Send Ctrl+T to open new tab
 sleep 1
